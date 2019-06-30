@@ -132,8 +132,9 @@ if __name__ == '__main__':
               '5bfb4e55ee8d420782c01a7f9c513eaa', '7012d30f061640da8b0e68fa91a2dc60',
               yandex_oauth=os.environ.get('YANDEX_OAUTH'))
     logging.basicConfig(
-        level=logging.WARN,
+        level=logging.INFO,
         format='%(threadName)25s %(name)18s: %(message)s',
         stream=sys.stderr,
     )
+    logging.getLogger("flickrapi.core").level = logging.WARN
     asyncio.run(app.run())
