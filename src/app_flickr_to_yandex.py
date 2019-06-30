@@ -64,6 +64,10 @@ class App:
         :return:
         """
         id, url_o, title = photo.get('id'), photo.get('url_o'), photo.get('title')
+        if url_o is None:
+            logger.warning(f"Image {id}: CDN path is Empty. Skipping {photo}")
+            return
+
         parsed = urlparse(url_o)
         path, ext = os.path.splitext(parsed.path)
 
