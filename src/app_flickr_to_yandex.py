@@ -47,20 +47,22 @@ class App:
         camera_folder = os.environ.get("YANDEX_PHOTOCAMERA", "Фотокамера")
         yandex_folder = f"disk:/{camera_folder}/{flickr_photoset_title}"
         try:
-            self.yadisk.get_meta(yandex_folder)
+            meta = self.yadisk.get_meta(yandex_folder, limit=1000)
+            filenames = [item.name for item in meta.embedded.items]
         except yadisk.exceptions.PathNotFoundError:
             self.yadisk.mkdir(yandex_folder)
+            filenames = []
         res = self.flickr.walk_set(flickr_photoset_id, 50, extras="url_o")
         loop = asyncio.get_running_loop()
         blocking_tasks = [
-            loop.run_in_executor(self.executor, self.process_photo, photo, yandex_folder)
+            loop.run_in_executor(self.executor, self.process_photo, photo, yandex_folder, filenames)
             for photo in res
         ]
         logger.info(f"Waiting for {len(blocking_tasks)} executor tasks")
         completed, pending = await asyncio.wait(blocking_tasks)
         return len(completed)
 
-    def process_photo(self, photo: Element, yandex_folder: str, t=0):
+    def process_photo(self, photo: Element, yandex_folder: str, filenames: list, t=0):
         """
         Process a single photo.
 
@@ -98,7 +100,12 @@ class App:
             title = path.replace('/', '')
             logger.warning(f"Image {id}: title was empty, new title is {title} (built from CDN path {url_o}")
 
-        yandex_full_path = f"{yandex_folder}/{title}{ext}"
+        filename_ext = f"{title}{ext}"
+        yandex_full_path = f"{yandex_folder}/{filename_ext}"
+
+        if filename_ext in filenames:
+            logger.info(f"Fast skipping {yandex_full_path}, it's already there")
+            return
 
         if t > 5:
             logger.warn(f"Failed to process {yandex_full_path}, giving up")
@@ -117,7 +124,7 @@ class App:
             except yadisk.exceptions.TooManyRequestsError as tme:
                 logger.warning(f"Too many requests when trying to upload {url_o} to {yandex_full_path} #{t}")
                 sleep(random.random())
-                return self.process_photo(photo, yandex_folder, t + 1)
+                return self.process_photo(photo, yandex_folder, filenames, t + 1)
 
 
 if __name__ == '__main__':
