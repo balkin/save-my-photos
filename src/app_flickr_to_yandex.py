@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from concurrent.futures.thread import ThreadPoolExecutor
+from time import sleep
 from urllib.parse import urlparse
 from xml.etree.ElementTree import Element
 
@@ -19,7 +20,7 @@ class App:
         super().__init__()
         self.flickr = flickrapi.FlickrAPI(flickr_key, flickr_secret)
         self.yadisk = yadisk.YaDisk(yandex_id, yandex_secret, yandex_oauth)
-        self.executor = ThreadPoolExecutor()
+        self.executor = ThreadPoolExecutor(4)
 
     async def run(self):
         self.flickr.authenticate_console()
@@ -28,6 +29,14 @@ class App:
             for folder in res:
                 completed = await self.process_folder(folder)
                 logger.info(f"Completed {completed} tasks in folder {folder.findtext('title')}")
+
+    async def authorize_oob(self):
+        self.flickr.get_request_token(oauth_callback='oob')
+        authorize_url = self.flickr.auth_url(perms='read')
+        print(authorize_url)
+        verifier = str(input('Verifier code: '))
+        # Trade the request token for an access token
+        self.flickr.get_access_token(verifier)
 
     async def process_folder(self, folder: Element):
         flickr_photoset_title, flickr_photoset_id = folder.findtext('title'), folder.get('id')
@@ -50,7 +59,7 @@ class App:
         completed, pending = await asyncio.wait(blocking_tasks)
         return len(completed)
 
-    def process_photo(self, photo: Element, yandex_folder: str):
+    def process_photo(self, photo: Element, yandex_folder: str, t = 0):
         """
         Process a single photo.
 
@@ -70,6 +79,7 @@ class App:
         - server (str) -- probably flickr internal server id
         - farm (str)
 
+        :param t: try #
         :param photo: Photo metadata.
         :param yandex_folder: Yandex Disk folder path
         :return:
@@ -77,6 +87,9 @@ class App:
         id, url_o, title = photo.get('id'), photo.get('url_o'), photo.get('title')
         if url_o is None:
             logger.warning(f"Image {id}: CDN path is Empty. Skipping {photo.attrib}")
+            return
+
+        if t > 3:
             return
 
         parsed = urlparse(url_o)
@@ -96,8 +109,12 @@ class App:
             try:
                 # This method returns immediately, yandex disk will fetch the photo asynchronously
                 self.yadisk.upload_url(url_o, yandex_full_path)
-            except yadisk.exceptions.FieldValidationError as e:
-                logger.exception(f"Something went wrong when trying to upload {url_o} to {yandex_full_path}", e)
+            except yadisk.exceptions.FieldValidationError as fve:
+                logger.exception(f"Something went wrong when trying to upload {url_o} to {yandex_full_path}", fve)
+            except yadisk.exceptions.TooManyRequestsError as tme:
+                logger.exception(f"Too many requests when trying to upload {url_o} to {yandex_full_path} #{t}", tme)
+                sleep(1)
+                return self.process_photo(photo, yandex_folder, t+1)
 
 
 if __name__ == '__main__':
