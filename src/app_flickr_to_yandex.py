@@ -1,5 +1,8 @@
+import asyncio
 import logging
 import os
+import sys
+from concurrent.futures.thread import ThreadPoolExecutor
 from urllib.parse import urlparse
 from xml.etree.ElementTree import Element
 
@@ -16,15 +19,17 @@ class App:
         super().__init__()
         self.flickr = flickrapi.FlickrAPI(flickr_key, flickr_secret)
         self.yadisk = yadisk.YaDisk(yandex_id, yandex_secret, yandex_oauth)
+        self.executor = ThreadPoolExecutor()
 
-    def run(self):
+    async def run(self):
         self.flickr.authenticate_console()
         if self.flickr.token_valid():
             res = self.flickr.walk_photosets()
             for folder in res:
-                self.process_folder(folder)
+                completed = await self.process_folder(folder)
+                logger.info(f"Completed {completed} tasks in folder {folder.findtext('title')}")
 
-    def process_folder(self, folder: Element):
+    async def process_folder(self, folder: Element):
         flickr_photoset_title, flickr_photoset_id = folder.findtext('title'), folder.get('id')
         logger.debug(f"Folder #{flickr_photoset_id} {folder} = {flickr_photoset_title}")
 
@@ -36,8 +41,14 @@ class App:
         except yadisk.exceptions.PathNotFoundError:
             self.yadisk.mkdir(yandex_folder)
         res = self.flickr.walk_set(flickr_photoset_id, 50, extras="url_o")
-        for photo in res:
-            self.process_photo(photo, yandex_folder)
+        loop = asyncio.get_running_loop()
+        blocking_tasks = [
+            loop.run_in_executor(self.executor, self.process_photo, photo, yandex_folder)
+            for photo in res
+        ]
+        logger.info(f"Waiting for {len(blocking_tasks)} executor tasks")
+        completed, pending = await asyncio.wait(blocking_tasks)
+        return len(completed)
 
     def process_photo(self, photo: Element, yandex_folder: str):
         """
@@ -65,7 +76,7 @@ class App:
         """
         id, url_o, title = photo.get('id'), photo.get('url_o'), photo.get('title')
         if url_o is None:
-            logger.warning(f"Image {id}: CDN path is Empty. Skipping {photo}")
+            logger.warning(f"Image {id}: CDN path is Empty. Skipping {photo.attrib}")
             return
 
         parsed = urlparse(url_o)
@@ -93,4 +104,9 @@ if __name__ == '__main__':
     app = App('24e321effac5a2bab1d495941800e2fe', 'a83ab8f70a937508',
               '5bfb4e55ee8d420782c01a7f9c513eaa', '7012d30f061640da8b0e68fa91a2dc60',
               yandex_oauth=os.environ.get('YANDEX_OAUTH'))
-    app.run()
+    logging.basicConfig(
+        level=logging.WARN,
+        format='%(threadName)25s %(name)18s: %(message)s',
+        stream=sys.stderr,
+    )
+    asyncio.run(app.run())
