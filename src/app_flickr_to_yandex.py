@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random
 import sys
 from concurrent.futures.thread import ThreadPoolExecutor
 from time import sleep
@@ -59,7 +60,7 @@ class App:
         completed, pending = await asyncio.wait(blocking_tasks)
         return len(completed)
 
-    def process_photo(self, photo: Element, yandex_folder: str, t = 0):
+    def process_photo(self, photo: Element, yandex_folder: str, t=0):
         """
         Process a single photo.
 
@@ -89,9 +90,6 @@ class App:
             logger.warning(f"Image {id}: CDN path is Empty. Skipping {photo.attrib}")
             return
 
-        if t > 3:
-            return
-
         parsed = urlparse(url_o)
         path, ext = os.path.splitext(parsed.path)
 
@@ -101,6 +99,11 @@ class App:
             logger.warning(f"Image {id}: title was empty, new title is {title} (built from CDN path {url_o}")
 
         yandex_full_path = f"{yandex_folder}/{title}{ext}"
+
+        if t > 5:
+            logger.warn(f"Failed to process {yandex_full_path}, giving up")
+            return
+
         try:
             # First, let's check whether the file already exists. We don't want to abuse Yandex or make clones
             self.yadisk.get_meta(yandex_full_path)
@@ -112,9 +115,9 @@ class App:
             except yadisk.exceptions.FieldValidationError as fve:
                 logger.exception(f"Something went wrong when trying to upload {url_o} to {yandex_full_path}", fve)
             except yadisk.exceptions.TooManyRequestsError as tme:
-                logger.exception(f"Too many requests when trying to upload {url_o} to {yandex_full_path} #{t}", tme)
-                sleep(1)
-                return self.process_photo(photo, yandex_folder, t+1)
+                logger.warning(f"Too many requests when trying to upload {url_o} to {yandex_full_path} #{t}")
+                sleep(random.random())
+                return self.process_photo(photo, yandex_folder, t + 1)
 
 
 if __name__ == '__main__':
